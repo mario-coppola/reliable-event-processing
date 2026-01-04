@@ -1,0 +1,8 @@
+node_modules
+dist
+.coverage
+.env
+.env.*
+.DS_Store
+
+# Docker volumes are local only; nothing to ignore here

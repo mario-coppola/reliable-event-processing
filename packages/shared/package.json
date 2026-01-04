@@ -1,0 +1,20 @@
+{
+    "name": "@pkg/shared",
+    "version": "0.0.0",
+    "private": true,
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "scripts": {
+      "build": "tsc -p tsconfig.json",
+      "typecheck": "tsc -p tsconfig.json --noEmit",
+      "lint": "echo \"lint: skipped (Issue 1)\"",
+      "test": "echo \"test: skipped (Issue 1)\""
+    },
+    "dependencies": {
+      "pino": "^9.0.0"
+    },
+    "devDependencies": {
+      "@types/node": "^24.0.0",
+      "typescript": "^5.0.0"
+    }
+  }
