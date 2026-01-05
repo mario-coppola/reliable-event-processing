@@ -1,0 +1,20 @@
+# Reliable Event Processing — Project Rules
+
+## Non-negotiable scope boundaries (M1)
+- Do not add retry/backoff/DLQ/attempts/parallelism unless explicitly requested by the current issue.
+- Do not add new job states beyond: queued, in_progress, done, failed.
+- Do not add ingestion deduplication (no UNIQUE constraints on external_event_id) unless explicitly requested.
+
+## Implementation style
+- Prefer explicit, minimal code over abstractions.
+- For DB interactions, use raw SQL via pg Pool unless explicitly requested to introduce an ORM.
+
+## Dependency/version consistency
+- Do not change dependency versions unless explicitly requested.
+- Keep @types/node aligned with the root workspace version.
+
+## Logging
+- Avoid log spam in loops: do not emit per-tick info logs.
+- Prefer state-transition logs: started, claimed, done, failed, idle-enter.---
+alwaysApply: true
+---
