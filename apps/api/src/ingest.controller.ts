@@ -41,23 +41,50 @@ export class IngestController {
   async ingest(@Body() body: unknown) {
     const event = validateIngestEvent(body);
 
+    const client = await db.connect();
+
     try {
-      await db.query(
+      await client.query("BEGIN");
+
+      const res = await client.query<{ id: number }>(
         `
         INSERT INTO event_ledger (event_type, external_event_id, raw_payload)
         VALUES ($1, $2, $3::jsonb)
+        RETURNING id
         `,
         [event.event_type, event.event_id, JSON.stringify(event)]
       );
+
+      const eventLedgerId = res.rows[0]?.id;
+      if (!eventLedgerId) {
+        throw new Error("event_ledger insert did not return an id");
+      }
+
+      await client.query(
+        `
+        INSERT INTO jobs (status, event_ledger_id, event_type, external_event_id)
+        VALUES ('queued', $1, $2, $3)
+        `,
+        [eventLedgerId, event.event_type, event.event_id]
+      );
+
+      await client.query("COMMIT");
     } catch (err) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        // ignore rollback errors
+      }
       // No retry, no inspection, no branching
       throw new ServiceUnavailableException("database unavailable");
+    } finally {
+      client.release();
     }
 
     // Minimal ingestion: accept + log. No persistence, no idempotency, no processing.
     logger.info(
       { service: "api", event_id: event.event_id, event_type: event.event_type },
-      "event ingested (minimal)"
+      "event ingested and job enqueued"
     );
 
     // Use 202 to signal "accepted for async processing" (even though we don't process yet).
