@@ -1,5 +1,9 @@
 # Reliable Event Processing
 
+## Development
+
+See `docs/dev-setup.md` for local development setup instructions.
+
 ## Problem
 ## Goal
 ## What this project demonstrates
