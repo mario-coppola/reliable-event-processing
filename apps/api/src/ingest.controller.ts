@@ -1,4 +1,4 @@
-import { Controller, Post, Body, BadRequestException, HttpCode } from "@nestjs/common";
+import { Controller, Post, Body, BadRequestException, HttpCode, ServiceUnavailableException } from "@nestjs/common";
 import { logger } from "@pkg/shared";
 import { db } from "./db";
 
@@ -41,13 +41,18 @@ export class IngestController {
   async ingest(@Body() body: unknown) {
     const event = validateIngestEvent(body);
 
-    await db.query(
-      `
-      INSERT INTO event_ledger (event_type, external_event_id, raw_payload)
-      VALUES ($1, $2, $3::jsonb)
-      `,
-      [event.event_type, event.event_id, JSON.stringify(event)]
-    );
+    try {
+      await db.query(
+        `
+        INSERT INTO event_ledger (event_type, external_event_id, raw_payload)
+        VALUES ($1, $2, $3::jsonb)
+        `,
+        [event.event_type, event.event_id, JSON.stringify(event)]
+      );
+    } catch (err) {
+      // No retry, no inspection, no branching
+      throw new ServiceUnavailableException("database unavailable");
+    }
 
     // Minimal ingestion: accept + log. No persistence, no idempotency, no processing.
     logger.info(
