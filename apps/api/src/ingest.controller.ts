@@ -1,5 +1,6 @@
 import { Controller, Post, Body, BadRequestException, HttpCode } from "@nestjs/common";
 import { logger } from "@pkg/shared";
+import { db } from "./db";
 
 type IngestEvent = {
   event_id: string;
@@ -37,8 +38,16 @@ function validateIngestEvent(body: unknown): IngestEvent {
 export class IngestController {
     @HttpCode(202) 
   @Post("/events/ingest")
-  ingest(@Body() body: unknown) {
+  async ingest(@Body() body: unknown) {
     const event = validateIngestEvent(body);
+
+    await db.query(
+      `
+      INSERT INTO event_ledger (event_type, external_event_id, raw_payload)
+      VALUES ($1, $2, $3::jsonb)
+      `,
+      [event.event_type, event.event_id, JSON.stringify(event)]
+    );
 
     // Minimal ingestion: accept + log. No persistence, no idempotency, no processing.
     logger.info(
