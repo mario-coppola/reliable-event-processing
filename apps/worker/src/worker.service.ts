@@ -21,6 +21,8 @@ export class WorkerService implements OnModuleInit {
   private readonly RETRY_DELAY_MS = 5000;
   private isIdle = false;
   private isErrorIdle = false;
+  private failpointUsed = false;
+  private readonly failpointEnabled = process.env.WORKER_FAILPOINT === "after_claim_once";
 
   async onModuleInit() {
     this.isRunning = true;
@@ -109,6 +111,13 @@ export class WorkerService implements OnModuleInit {
           "job skipped (irrelevant event_type)"
         );
         return;
+      }
+
+      // DEV-ONLY failpoint: simulate transient failure once per worker process
+      if (this.failpointEnabled && !this.failpointUsed) {
+        this.failpointUsed = true;
+        logger.info({ service: "worker", job_id: job.id }, "failpoint triggered");
+        throw new Error("failpoint: simulated transient failure");
       }
 
       await this.processSubscriptionPaid(job);
