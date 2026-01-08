@@ -66,3 +66,46 @@ This decision explicitly does **not** introduce:
 - global or per-entity ordering guarantees
 - worker orchestration beyond safe job claiming
 - semantic interpretation of events at ingestion time
+
+### D-003 — Controlled retries model (M2)
+
+In M2 we introduce **controlled, observable, and bounded retries** at the job level, without altering the system’s safety boundary.  
+**Effect-level idempotency remains the only idempotency guarantee.**
+
+#### Structural decisions
+
+- Retries are modeled on **the same job**, not by creating new jobs.
+- Jobs explicitly include the following fields:
+  - `attempts` (integer, initialized to 0)
+  - `max_attempts` (integer, explicit and bounded)
+  - `failure_type` (`retryable` | `permanent`, technical classification)
+  - `last_error` (optional text)
+  - `available_at` (TIMESTAMPTZ, minimal scheduling mechanism)
+
+- A worker may claim a job **only if**:
+  - `status = 'queued'`
+  - `available_at <= now()`
+
+- Job claiming and attempts increment are **atomic**:
+  - `attempts` is incremented when transitioning the job to `in_progress`
+  - Claim + attempts increment happen in the same DB transaction
+  - Concurrency safety is enforced via `SELECT … FOR UPDATE SKIP LOCKED`
+
+- Retry eligibility rules:
+  - A job is retryable only if:
+    - `failure_type = 'retryable'`
+    - `attempts < max_attempts`
+  - No infinite retries are allowed.
+
+- Failure classification:
+  - Failure classification is **technical**, not business/domain-driven.
+  - Domain semantics and recovery strategies are explicitly out of scope for M2.
+
+#### Explicit non-decisions
+
+- No backoff strategies beyond `available_at`
+- No dead-letter queue
+- No external queues
+- No ordering guarantees
+
+This decision fixes the retry model for M2 and prevents retry-related complexity from leaking into later milestones.
