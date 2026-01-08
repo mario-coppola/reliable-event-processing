@@ -109,3 +109,13 @@ In M2 we introduce **controlled, observable, and bounded retries** at the job le
 - No ordering guarantees
 
 This decision fixes the retry model for M2 and prevents retry-related complexity from leaking into later milestones.
+
+### Additional clarifications
+
+- `max_attempts` MUST be explicitly set when a job is created.
+  - A system-level default value MAY be applied at insertion time by the API or worker.
+  - This default is considered explicit configuration, not an implicit retry behavior.
+
+- `failure_type` MAY be `NULL` until a job fails for the first time.
+  - Classification (`retryable` | `permanent`) is applied only upon failure.
+  - No pre-emptive or speculative classification is allowed.
