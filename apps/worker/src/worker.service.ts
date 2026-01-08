@@ -9,6 +9,9 @@ type Job = {
   event_type: string;
   external_event_id: string;
   created_at: Date;
+  attempts: number;
+  max_attempts: number;
+  available_at: Date;
 };
 
 @Injectable()
@@ -58,9 +61,10 @@ export class WorkerService implements OnModuleInit {
 
       const result = await client.query<Job>(
         `
-        SELECT id, status, event_ledger_id, event_type, external_event_id, created_at
+        SELECT id, status, event_ledger_id, event_type, external_event_id, created_at,
+       attempts, max_attempts, available_at
         FROM jobs
-        WHERE status = 'queued'
+        WHERE status = 'queued' AND available_at <= NOW()
         ORDER BY id ASC
         FOR UPDATE SKIP LOCKED
         LIMIT 1
@@ -73,9 +77,10 @@ export class WorkerService implements OnModuleInit {
       }
 
       const job = result.rows[0];
-      await client.query("UPDATE jobs SET status = 'in_progress' WHERE id = $1", [
-        job.id,
-      ]);
+      await client.query(
+        "UPDATE jobs SET status = 'in_progress', attempts = attempts + 1 WHERE id = $1",
+        [job.id]
+      );
 
       await client.query("COMMIT");
       logger.info(
@@ -251,4 +256,3 @@ export class WorkerService implements OnModuleInit {
     this.isIdle = false;
   }
 }
-
