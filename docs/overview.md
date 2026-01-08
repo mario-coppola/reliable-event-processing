@@ -86,3 +86,10 @@ pnpm demo:send -- --invalid
 - apps/worker – background worker (not used in M0)  
 - packages/shared – shared runtime utilities  
 - infra – local infrastructure (docker-compose, SQL init)
+
+## M1: Async processing with idempotent effects
+
+M1 introduces asynchronous job processing and a single idempotent business effect
+(activate subscription), enforced at the effect level.
+
+See docs/guarantees.md for guarantees and explicit non-guarantees.
