@@ -18,6 +18,7 @@ type Job = {
 export class WorkerService implements OnModuleInit {
   private isRunning = false;
   private readonly POLL_INTERVAL_MS = 750;
+  private readonly RETRY_DELAY_MS = 5000;
   private isIdle = false;
   private isErrorIdle = false;
 
@@ -98,32 +99,65 @@ export class WorkerService implements OnModuleInit {
     }
   }
 
-    private async processJob(job: Job) {
-      try {
-        if (job.event_type !== "subscription.paid") {
-          await this.sleep(200);
-          await this.updateJobStatus(job.id, "done");
-          logger.info(
-            { service: "worker", job_id: job.id, event_type: job.event_type },
-            "job skipped (irrelevant event_type)"
-          );
-          return;
-        }
-
-        await this.processSubscriptionPaid(job);
+  private async processJob(job: Job) {
+    try {
+      if (job.event_type !== "subscription.paid") {
+        await this.sleep(200);
         await this.updateJobStatus(job.id, "done");
         logger.info(
           { service: "worker", job_id: job.id, event_type: job.event_type },
-          "job completed"
+          "job skipped (irrelevant event_type)"
         );
-      } catch (error) {
-        await this.updateJobStatus(job.id, "failed");
-        logger.error(
-          { service: "worker", job_id: job.id, event_type: job.event_type, error },
-          "job failed"
+        return;
+      }
+
+      await this.processSubscriptionPaid(job);
+      await this.updateJobStatus(job.id, "done");
+      logger.info(
+        { service: "worker", job_id: job.id, event_type: job.event_type },
+        "job completed"
+      );
+    } catch (error) {
+      const errorString = this.errorToString(error);
+      const failureType = this.classifyFailure(error);
+      const retryState = await this.getJobRetryState(job.id);
+
+      if (
+        failureType === "retryable" &&
+        retryState.attempts < retryState.max_attempts
+      ) {
+        await this.requeueJob(job.id, errorString, this.RETRY_DELAY_MS);
+        logger.info(
+          {
+            service: "worker",
+            job_id: job.id,
+            attempts: retryState.attempts,
+            max_attempts: retryState.max_attempts,
+          },
+          "job re-queued (retryable)"
         );
+      } else {
+        if (retryState.attempts >= retryState.max_attempts) {
+          await this.failJob(job.id, failureType, errorString);
+          logger.error(
+            {
+              service: "worker",
+              job_id: job.id,
+              attempts: retryState.attempts,
+              max_attempts: retryState.max_attempts,
+            },
+            "job failed (max attempts reached)"
+          );
+        } else {
+          await this.failJob(job.id, failureType, errorString);
+          logger.error(
+            { service: "worker", job_id: job.id },
+            "job failed (permanent)"
+          );
+        }
       }
     }
+  }
 
   private async processSubscriptionPaid(job: Job) {
     const client = await db.connect();
@@ -234,7 +268,97 @@ export class WorkerService implements OnModuleInit {
     }
   }
 
-  private async updateJobStatus(jobId: number, status: "done" | "failed") {
+  private errorToString(error: unknown): string {
+    if (error instanceof Error) {
+      return error.message;
+    }
+    return String(error);
+  }
+
+  private classifyFailure(error: unknown): "retryable" | "permanent" {
+    // Conservative classification: most errors are retryable
+    // Only mark as permanent if it's clearly a business/validation error
+    if (error instanceof Error) {
+      const message = error.message.toLowerCase();
+      // Permanent: malformed data, validation errors
+      if (
+        message.includes("malformed") ||
+        message.includes("missing") ||
+        message.includes("invalid") ||
+        message.includes("not found") ||
+        message.includes("event_ledger entry not found")
+      ) {
+        return "permanent";
+      }
+    }
+    // Default: retryable (network errors, DB errors, timeouts, etc.)
+    return "retryable";
+  }
+
+  private async getJobRetryState(
+    jobId: number
+  ): Promise<{ attempts: number; max_attempts: number }> {
+    const client = await db.connect();
+    try {
+      const result = await client.query<{ attempts: number; max_attempts: number }>(
+        "SELECT attempts, max_attempts FROM jobs WHERE id = $1",
+        [jobId]
+      );
+      if (result.rows.length === 0) {
+        throw new Error(`Job ${jobId} not found`);
+      }
+      return result.rows[0];
+    } finally {
+      client.release();
+    }
+  }
+
+  private async requeueJob(
+    jobId: number,
+    lastError: string,
+    delayMs: number
+  ): Promise<void> {
+    const client = await db.connect();
+    try {
+      await client.query(
+        `
+        UPDATE jobs
+        SET status = 'queued',
+            last_error = $1,
+            failure_type = 'retryable',
+            available_at = NOW() + ($2::text || ' milliseconds')::interval
+        WHERE id = $3
+        `,
+        [lastError, delayMs, jobId]
+      );
+    } finally {
+      client.release();
+    }
+  }
+
+  private async failJob(
+    jobId: number,
+    failureType: "retryable" | "permanent",
+    lastError: string
+  ): Promise<void> {
+    const client = await db.connect();
+    try {
+      await client.query(
+        `
+        UPDATE jobs
+        SET status = 'failed',
+            failure_type = $1,
+            last_error = $2
+        WHERE id = $3
+        `,
+        [failureType, lastError, jobId]
+      );
+    } finally {
+      client.release();
+    }
+  }
+
+  private async updateJobStatus(jobId: number, status: "done") {
     const client = await db.connect();
     try {
       await client.query("UPDATE jobs SET status = $1 WHERE id = $2", [
