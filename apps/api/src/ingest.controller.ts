@@ -62,8 +62,8 @@ export class IngestController {
 
       await client.query(
         `
-        INSERT INTO jobs (status, event_ledger_id, event_type, external_event_id)
-        VALUES ('queued', $1, $2, $3)
+        INSERT INTO jobs (status, event_ledger_id, event_type, external_event_id, max_attempts, available_at)
+        VALUES ('queued', $1, $2, $3, 3, NOW())
         `,
         [eventLedgerId, event.event_type, event.event_id]
       );

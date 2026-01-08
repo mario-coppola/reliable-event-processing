@@ -118,42 +118,56 @@ export class WorkerService implements OnModuleInit {
         "job completed"
       );
     } catch (error) {
-      const errorString = this.errorToString(error);
-      const failureType = this.classifyFailure(error);
-      const retryState = await this.getJobRetryState(job.id);
+      try {
+        const errorString = this.errorToString(error);
+        const failureType = this.classifyFailure(error);
+        const retryState = await this.getJobRetryState(job.id);
 
-      if (
-        failureType === "retryable" &&
-        retryState.attempts < retryState.max_attempts
-      ) {
-        await this.requeueJob(job.id, errorString, this.RETRY_DELAY_MS);
-        logger.info(
-          {
-            service: "worker",
-            job_id: job.id,
-            attempts: retryState.attempts,
-            max_attempts: retryState.max_attempts,
-          },
-          "job re-queued (retryable)"
-        );
-      } else {
-        if (retryState.attempts >= retryState.max_attempts) {
-          await this.failJob(job.id, failureType, errorString);
-          logger.error(
+        if (
+          failureType === "retryable" &&
+          retryState.attempts < retryState.max_attempts
+        ) {
+          await this.requeueJob(job.id, errorString, this.RETRY_DELAY_MS);
+          logger.info(
             {
               service: "worker",
               job_id: job.id,
               attempts: retryState.attempts,
               max_attempts: retryState.max_attempts,
             },
-            "job failed (max attempts reached)"
+            "job re-queued (retryable)"
           );
         } else {
+          if (retryState.attempts >= retryState.max_attempts) {
+            await this.failJob(job.id, failureType, errorString);
+            logger.error(
+              {
+                service: "worker",
+                job_id: job.id,
+                attempts: retryState.attempts,
+                max_attempts: retryState.max_attempts,
+              },
+              "job failed (max attempts reached)"
+            );
+          } else {
+            await this.failJob(job.id, failureType, errorString);
+            logger.error(
+              { service: "worker", job_id: job.id },
+              "job failed (permanent)"
+            );
+          }
+        }
+      } catch (fallbackError) {
+        logger.error(
+          { service: "worker", job_id: job.id, error: fallbackError },
+          "job state update failed"
+        );
+        try {
+          const errorString = this.errorToString(error);
+          const failureType = this.classifyFailure(error);
           await this.failJob(job.id, failureType, errorString);
-          logger.error(
-            { service: "worker", job_id: job.id },
-            "job failed (permanent)"
-          );
+        } catch {
+          // ignore fallback update failures, already logged
         }
       }
     }
