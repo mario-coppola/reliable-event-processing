@@ -1,0 +1,31 @@
+---
+globs: apps/worker/**
+alwaysApply: false
+---
+# Reliable Event Processing — M2 Controlled Retries Rules
+
+## Non-negotiable scope boundaries (M2)
+- Retries only for jobs with failure_type='retryable' AND attempts < max_attempts.
+- Retry means re-queueing the SAME job row (no new jobs).
+- Use available_at as minimal scheduling; fixed delay is OK. No exponential backoff logic.
+- No DLQ, no external queues.
+- No ordering guarantees.
+- Keep event_ledger append-only. Never mutate ledger rows.
+- Keep job states limited to: queued, in_progress, done, failed (no new states).
+
+## Atomicity / concurrency safety
+- Claim must remain concurrency-safe using SELECT ... FOR UPDATE SKIP LOCKED.
+- attempts is incremented atomically when transitioning queued -> in_progress.
+- Retry decision must read current attempts/max_attempts from DB or use the claimed row safely.
+
+## Failure classification
+- failure_type classification must be TECHNICAL only (retryable vs permanent), not business/domain.
+- Record last_error on failures.
+
+## Implementation style
+- Keep code minimal and explicit; prefer small helper functions over abstractions.
+- Use raw SQL via pg Pool (no ORM).
+
+## Logging
+- No log spam in idle loop.
+- Log only state transitions: claimed, completed, failed, re-queued, max-attempts-reached.
