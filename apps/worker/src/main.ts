@@ -1,8 +1,8 @@
-import "reflect-metadata";
-import { NestFactory } from "@nestjs/core";
-import { AppModule } from "./app.module";
-import { logger, onShutdown } from "@pkg/shared";
-import { WorkerService } from "./worker.service";
+import 'reflect-metadata';
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import { logger, onShutdown } from '@pkg/shared';
+import { WorkerService } from './worker.service';
 
 async function bootstrap() {
   const app = await NestFactory.createApplicationContext(AppModule, {
@@ -12,15 +12,14 @@ async function bootstrap() {
   const workerService = app.get(WorkerService);
 
   onShutdown(async (signal) => {
-    logger.info({ service: "worker", signal }, "worker stopping");
-    await workerService.stop();
+    logger.info({ service: 'worker', signal }, 'worker stopping');
+    workerService.stop();
     await app.close();
-    logger.info({ service: "worker" }, "worker stopped");
+    logger.info({ service: 'worker' }, 'worker stopped');
   });
 }
 
 bootstrap().catch((err) => {
-  // eslint-disable-next-line no-console
   console.error(err);
   process.exit(1);
 });

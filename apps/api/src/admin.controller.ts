@@ -1,5 +1,5 @@
-import { Controller, Get, Query, BadRequestException } from "@nestjs/common";
-import { db } from "./db";
+import { Controller, Get, Query, BadRequestException } from '@nestjs/common';
+import { db } from './db';
 
 type JobRow = {
   id: number;
@@ -26,15 +26,15 @@ function clampLimit(limit: unknown): number {
   }
   const num = Number(limit);
   if (isNaN(num) || num < 1) {
-    throw new BadRequestException("limit must be a number between 1 and 200");
+    throw new BadRequestException('limit must be a number between 1 and 200');
   }
   return Math.min(Math.max(1, Math.floor(num)), 200);
 }
 
-@Controller("admin")
+@Controller('admin')
 export class AdminController {
-  @Get("jobs")
-  async getJobs(@Query("limit") limit?: unknown) {
+  @Get('jobs')
+  async getJobs(@Query('limit') limit?: unknown) {
     const clampedLimit = clampLimit(limit);
 
     const client = await db.connect();
@@ -46,7 +46,7 @@ export class AdminController {
         ORDER BY id DESC
         LIMIT $1
         `,
-        [clampedLimit]
+        [clampedLimit],
       );
 
       return {
@@ -58,8 +58,8 @@ export class AdminController {
     }
   }
 
-  @Get("effects")
-  async getEffects(@Query("limit") limit?: unknown) {
+  @Get('effects')
+  async getEffects(@Query('limit') limit?: unknown) {
     const clampedLimit = clampLimit(limit);
 
     const client = await db.connect();
@@ -71,7 +71,7 @@ export class AdminController {
         ORDER BY id DESC
         LIMIT $1
         `,
-        [clampedLimit]
+        [clampedLimit],
       );
 
       return {
@@ -83,4 +83,3 @@ export class AdminController {
     }
   }
 }
-

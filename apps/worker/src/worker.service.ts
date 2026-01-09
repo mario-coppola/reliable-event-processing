@@ -1,46 +1,41 @@
-import { Injectable, OnModuleInit } from "@nestjs/common";
-import { logger } from "@pkg/shared";
-import { db } from "./db";
-
-type Job = {
-  id: number;
-  status: string;
-  event_ledger_id: number;
-  event_type: string;
-  external_event_id: string;
-  created_at: Date;
-  attempts: number;
-  max_attempts: number;
-  available_at: Date;
-};
+import { Injectable, OnModuleInit } from '@nestjs/common';
+import { logger } from '@pkg/shared';
+import { JobRepository } from './jobs/job.repository';
+import type { Job } from './jobs/job.types';
+import { SubscriptionActivationService } from './handlers/subscription-activation.service';
+import { classifyFailure } from './retry/failure-classifier';
+import { shouldRetry, RETRY_DELAY_MS } from './retry/retry.policy';
+import { shouldFailNow } from './dev/failpoint.dev';
 
 @Injectable()
 export class WorkerService implements OnModuleInit {
   private isRunning = false;
   private readonly POLL_INTERVAL_MS = 750;
-  private readonly RETRY_DELAY_MS = 5000;
   private isIdle = false;
   private isErrorIdle = false;
-  private failpointUsed = false;
-  private readonly failpointEnabled = process.env.WORKER_FAILPOINT === "after_claim_once";
 
-  async onModuleInit() {
+  constructor(
+    private readonly jobRepository: JobRepository,
+    private readonly subscriptionActivationService: SubscriptionActivationService,
+  ) {}
+
+  onModuleInit() {
     this.isRunning = true;
-    logger.info({ service: "worker" }, "worker started");
-    this.poll();
+    logger.info({ service: 'worker' }, 'worker started');
+    void this.poll();
   }
 
   private async poll() {
     while (this.isRunning) {
       try {
-        const job = await this.claimJob();
+        const job = await this.jobRepository.claimJob();
         if (job) {
           this.isIdle = false;
           this.isErrorIdle = false;
           await this.processJob(job);
         } else {
           if (!this.isIdle) {
-            logger.info({ service: "worker" }, "no jobs available");
+            logger.info({ service: 'worker' }, 'no jobs available');
             this.isIdle = true;
           }
           this.isErrorIdle = false;
@@ -48,7 +43,7 @@ export class WorkerService implements OnModuleInit {
         }
       } catch (error) {
         if (!this.isErrorIdle) {
-          logger.error({ service: "worker", error }, "error in poll loop");
+          logger.error({ service: 'worker', error }, 'error in poll loop');
           this.isErrorIdle = true;
         }
         this.isIdle = false;
@@ -57,237 +52,84 @@ export class WorkerService implements OnModuleInit {
     }
   }
 
-  private async claimJob(): Promise<Job | null> {
-    const client = await db.connect();
-    try {
-      await client.query("BEGIN");
-
-      const result = await client.query<Job>(
-        `
-        SELECT id, status, event_ledger_id, event_type, external_event_id, created_at,
-       attempts, max_attempts, available_at
-        FROM jobs
-        WHERE status = 'queued' AND available_at <= NOW()
-        ORDER BY id ASC
-        FOR UPDATE SKIP LOCKED
-        LIMIT 1
-        `
-      );
-
-      if (result.rows.length === 0) {
-        await client.query("COMMIT");
-        return null;
-      }
-
-      const job = result.rows[0];
-      await client.query(
-        "UPDATE jobs SET status = 'in_progress', attempts = attempts + 1 WHERE id = $1",
-        [job.id]
-      );
-
-      await client.query("COMMIT");
-      logger.info(
-        { service: "worker", job_id: job.id, event_type: job.event_type },
-        "job claimed"
-      );
-      return job;
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => {
-        // ignore rollback errors
-      });
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
-
   private async processJob(job: Job) {
     try {
-      if (job.event_type !== "subscription.paid") {
+      if (job.event_type !== 'subscription.paid') {
         await this.sleep(200);
-        await this.updateJobStatus(job.id, "done");
+        await this.jobRepository.markDone(job.id);
         logger.info(
-          { service: "worker", job_id: job.id, event_type: job.event_type },
-          "job skipped (irrelevant event_type)"
+          { service: 'worker', job_id: job.id, event_type: job.event_type },
+          'job skipped (irrelevant event_type)',
         );
         return;
       }
 
       // DEV-ONLY failpoint: simulate transient failure once per worker process
-      if (this.failpointEnabled && !this.failpointUsed) {
-        this.failpointUsed = true;
-        logger.info({ service: "worker", job_id: job.id }, "failpoint triggered");
-        throw new Error("failpoint: simulated transient failure");
+      if (shouldFailNow()) {
+        logger.info(
+          { service: 'worker', job_id: job.id },
+          'failpoint triggered',
+        );
+        throw new Error('failpoint: simulated transient failure');
       }
 
-      await this.processSubscriptionPaid(job);
-      await this.updateJobStatus(job.id, "done");
+      await this.subscriptionActivationService.processSubscriptionPaid(job);
+      await this.jobRepository.markDone(job.id);
       logger.info(
-        { service: "worker", job_id: job.id, event_type: job.event_type },
-        "job completed"
+        { service: 'worker', job_id: job.id, event_type: job.event_type },
+        'job completed',
       );
     } catch (error) {
       try {
         const errorString = this.errorToString(error);
-        const failureType = this.classifyFailure(error);
-        const retryState = await this.getJobRetryState(job.id);
+        const failureType = classifyFailure(error);
+        const retryState = await this.jobRepository.getRetryState(job.id);
 
         if (
-          failureType === "retryable" &&
-          retryState.attempts < retryState.max_attempts
+          shouldRetry(retryState.attempts, retryState.max_attempts, failureType)
         ) {
-          await this.requeueJob(job.id, errorString, this.RETRY_DELAY_MS);
+          await this.jobRepository.requeue(job.id, errorString, RETRY_DELAY_MS);
           logger.info(
             {
-              service: "worker",
+              service: 'worker',
               job_id: job.id,
               attempts: retryState.attempts,
               max_attempts: retryState.max_attempts,
             },
-            "job re-queued (retryable)"
+            'job re-queued (retryable)',
           );
         } else {
+          await this.jobRepository.fail(job.id, failureType, errorString);
           if (retryState.attempts >= retryState.max_attempts) {
-            await this.failJob(job.id, failureType, errorString);
             logger.error(
               {
-                service: "worker",
+                service: 'worker',
                 job_id: job.id,
                 attempts: retryState.attempts,
                 max_attempts: retryState.max_attempts,
               },
-              "job failed (max attempts reached)"
+              'job failed (max attempts reached)',
             );
           } else {
-            await this.failJob(job.id, failureType, errorString);
             logger.error(
-              { service: "worker", job_id: job.id },
-              "job failed (permanent)"
+              { service: 'worker', job_id: job.id },
+              'job failed (permanent)',
             );
           }
         }
       } catch (fallbackError) {
         logger.error(
-          { service: "worker", job_id: job.id, error: fallbackError },
-          "job state update failed"
+          { service: 'worker', job_id: job.id, error: fallbackError },
+          'job state update failed',
         );
         try {
           const errorString = this.errorToString(error);
-          const failureType = this.classifyFailure(error);
-          await this.failJob(job.id, failureType, errorString);
+          const failureType = classifyFailure(error);
+          await this.jobRepository.fail(job.id, failureType, errorString);
         } catch {
           // ignore fallback update failures, already logged
         }
       }
-    }
-  }
-
-  private async processSubscriptionPaid(job: Job) {
-    const client = await db.connect();
-    try {
-      // Load raw payload from event_ledger
-      const ledgerResult = await client.query<{ raw_payload: unknown }>(
-        "SELECT raw_payload FROM event_ledger WHERE id = $1",
-        [job.event_ledger_id]
-      );
-
-      if (ledgerResult.rows.length === 0) {
-        throw new Error("event_ledger entry not found");
-      }
-
-      const rawPayload = ledgerResult.rows[0].raw_payload;
-      if (
-        typeof rawPayload !== "object" ||
-        rawPayload === null ||
-        !("payload" in rawPayload) ||
-        typeof rawPayload.payload !== "object" ||
-        rawPayload.payload === null ||
-        !("subscription_id" in rawPayload.payload) ||
-        typeof rawPayload.payload.subscription_id !== "string"
-      ) {
-        throw new Error("malformed payload: missing subscription_id");
-      }
-
-      const subscriptionId = rawPayload.payload.subscription_id;
-      const idempotencyKey = `activate_subscription:${subscriptionId}`;
-
-      // Insert with status 'pending'
-      try {
-        await client.query(
-          `
-          INSERT INTO subscription_activations (idempotency_key, subscription_id, status)
-          VALUES ($1, $2, 'pending')
-          `,
-          [idempotencyKey, subscriptionId]
-        );
-
-        // Update to 'succeeded'
-        await client.query(
-          `
-          UPDATE subscription_activations
-          SET status = 'succeeded', updated_at = NOW()
-          WHERE idempotency_key = $1
-          `,
-          [idempotencyKey]
-        );
-
-        logger.info(
-          {
-            service: "worker",
-            job_id: job.id,
-            subscription_id: subscriptionId,
-          },
-          "effect applied"
-        );
-      } catch (insertError: unknown) {
-        // Check for unique constraint violation (PostgreSQL error code 23505)
-        if (
-          insertError &&
-          typeof insertError === "object" &&
-          "code" in insertError &&
-          insertError.code === "23505"
-        ) {
-          logger.info(
-            {
-              service: "worker",
-              job_id: job.id,
-              subscription_id: subscriptionId,
-            },
-            "duplicate effect"
-          );
-          return;
-        }
-
-        // Real error - try to mark as failed
-        const errorMessage =
-          insertError instanceof Error ? insertError.message : String(insertError);
-        try {
-          await client.query(
-            `
-            INSERT INTO subscription_activations (idempotency_key, subscription_id, status, error_message)
-            VALUES ($1, $2, 'failed', $3)
-            ON CONFLICT (idempotency_key) DO UPDATE
-            SET status = 'failed', error_message = $3, updated_at = NOW()
-            `,
-            [idempotencyKey, subscriptionId, errorMessage]
-          );
-        } catch {
-          // ignore persistence errors, throw original error
-        }
-
-        logger.error(
-          {
-            service: "worker",
-            job_id: job.id,
-            subscription_id: subscriptionId,
-            error: insertError,
-          },
-          "effect failed"
-        );
-        throw insertError;
-      }
-    } finally {
-      client.release();
     }
   }
 
@@ -298,106 +140,11 @@ export class WorkerService implements OnModuleInit {
     return String(error);
   }
 
-  private classifyFailure(error: unknown): "retryable" | "permanent" {
-    // Conservative classification: most errors are retryable
-    // Only mark as permanent if it's clearly a business/validation error
-    if (error instanceof Error) {
-      const message = error.message.toLowerCase();
-      // Permanent: malformed data, validation errors
-      if (
-        message.includes("malformed") ||
-        message.includes("missing") ||
-        message.includes("invalid") ||
-        message.includes("not found") ||
-        message.includes("event_ledger entry not found")
-      ) {
-        return "permanent";
-      }
-    }
-    // Default: retryable (network errors, DB errors, timeouts, etc.)
-    return "retryable";
-  }
-
-  private async getJobRetryState(
-    jobId: number
-  ): Promise<{ attempts: number; max_attempts: number }> {
-    const client = await db.connect();
-    try {
-      const result = await client.query<{ attempts: number; max_attempts: number }>(
-        "SELECT attempts, max_attempts FROM jobs WHERE id = $1",
-        [jobId]
-      );
-      if (result.rows.length === 0) {
-        throw new Error(`Job ${jobId} not found`);
-      }
-      return result.rows[0];
-    } finally {
-      client.release();
-    }
-  }
-
-  private async requeueJob(
-    jobId: number,
-    lastError: string,
-    delayMs: number
-  ): Promise<void> {
-    const client = await db.connect();
-    try {
-      await client.query(
-        `
-        UPDATE jobs
-        SET status = 'queued',
-            last_error = $1,
-            failure_type = 'retryable',
-            available_at = NOW() + ($2::text || ' milliseconds')::interval
-        WHERE id = $3
-        `,
-        [lastError, delayMs, jobId]
-      );
-    } finally {
-      client.release();
-    }
-  }
-
-  private async failJob(
-    jobId: number,
-    failureType: "retryable" | "permanent",
-    lastError: string
-  ): Promise<void> {
-    const client = await db.connect();
-    try {
-      await client.query(
-        `
-        UPDATE jobs
-        SET status = 'failed',
-            failure_type = $1,
-            last_error = $2
-        WHERE id = $3
-        `,
-        [failureType, lastError, jobId]
-      );
-    } finally {
-      client.release();
-    }
-  }
-
-  private async updateJobStatus(jobId: number, status: "done") {
-    const client = await db.connect();
-    try {
-      await client.query("UPDATE jobs SET status = $1 WHERE id = $2", [
-        status,
-        jobId,
-      ]);
-    } finally {
-      client.release();
-    }
-  }
-
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  async stop() {
+  stop() {
     this.isRunning = false;
     this.isErrorIdle = false;
     this.isIdle = false;
