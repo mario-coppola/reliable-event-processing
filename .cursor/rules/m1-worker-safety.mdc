@@ -18,6 +18,5 @@ alwaysApply: false
 
 ## Logging
 - Avoid log spam in loops: do not emit per-tick info logs.
-- Prefer state-transition logs: started, claimed, done, failed, idle-enter.---
-alwaysApply: true
+- Prefer state-transition logs: started, claimed, done, failed, idle-enter.
 ---

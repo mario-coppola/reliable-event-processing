@@ -1,0 +1,59 @@
+---
+globs: apps/api/**,infra/sql/**
+alwaysApply: false
+---
+# Reliable Event Processing — M3 Manual Intervention Rules (M3-A)
+
+## Goal (M3-A)
+Introduce explicit, human-triggered interventions for failed jobs (e.g., manual re-queue / override),
+with auditability and zero new automation.
+
+## Non-negotiable scope boundaries (M3)
+- NO new automatic retry logic beyond what exists in M2.
+- NO DLQ (no dead-letter queues, no external queues, no new queue tables).
+- NO ordering guarantees (global or per-key).
+- NO ingest deduplication (no UNIQUE constraints on external_event_id, no “already seen” checks).
+- NO new safety boundary: effect-level idempotency remains the only safety boundary.
+- NO new job states. Jobs statuses remain exactly: queued, in_progress, done, failed.
+- NO domain semantics: interventions are operational/technical, not business state transitions.
+
+## Allowed M3 changes
+- Add explicit, read-only admin inspection endpoints for intervention history.
+- Add explicit, write endpoints for manual intervention ONLY (e.g., requeue/override), one job at a time.
+- Add an audit log table for manual interventions (job_id, action, actor, reason, created_at, optional metadata).
+- Extend /admin/jobs outputs only if needed to support demo/observability (still read-only).
+
+## Data model and constraints
+- Manual re-queue MUST update the SAME job row (no new job row creation).
+- Manual re-queue MUST NOT modify event_ledger (append-only remains).
+- Manual override MAY change:
+  - status (failed -> queued only)
+  - available_at (set to NOW() or an explicit timestamp)
+  - last_error/failure_type only if explicitly required by the issue (prefer preserving)
+- Audit entry MUST be written for every manual intervention (no silent changes).
+
+## Safety checks (mandatory)
+- Disallow re-queue if status is done.
+- Disallow re-queue if status is in_progress (avoid double processing).
+- If status is queued already, either reject or require explicit “force” semantics (keep minimal; prefer reject).
+- Validate inputs strictly (job_id numeric, reason non-empty, actor non-empty).
+- Endpoints MUST be side-effect free unless explicitly "manual intervention" endpoints.
+
+## Implementation style
+- Prefer explicit, minimal code over abstractions.
+- Use raw SQL via pg Pool (no ORM).
+- Keep code paths short and easily auditable.
+- Avoid “smart” automation or background schedulers.
+
+## Logging
+- Log only state transitions and manual actions:
+  - manual re-queued
+  - manual override applied
+  - manual action rejected (with reason)
+- No log spam in loops.
+
+## Testing / verification (manual)
+- Demonstrate:
+  1) job failed -> manual re-queue -> job eventually done
+  2) audit log shows who/when/why
+  3) admin endpoints show both job state + intervention history
