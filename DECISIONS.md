@@ -119,3 +119,35 @@ This decision fixes the retry model for M2 and prevents retry-related complexity
 - `failure_type` MAY be `NULL` until a job fails for the first time.
   - Classification (`retryable` | `permanent`) is applied only upon failure.
   - No pre-emptive or speculative classification is allowed.
+
+  ## D-004: Manual re-queue as the first-class “human intervention” mechanism (M3-A)
+
+**Date:** 2026-01-11
+
+### Decision
+Introduce an explicit, manual intervention operation to re-queue a job that is in `failed` state.
+
+This is intentionally **not automation**. It is an operator action used when bounded automated retries (M2) are exhausted or when a human decides to re-run a failed job after external remediation.
+
+### Operational semantics
+- Manual re-queue operates on the **same job row** (no new jobs are created).
+- Preconditions (must be enforced):
+  - job `status` must be `failed`
+  - job must not be `in_progress` or `done`
+- State transition:
+  - `status` is set to `queued`
+  - `available_at` is set to `NOW()` (minimal scheduling; immediate eligibility)
+- The event ledger remains **append-only** and is never mutated.
+- Effect-level idempotency remains the safety boundary (manual re-queue does not change this).
+
+### Rationale
+After M2, the system can stop automatically (bounded retries). We need a minimal and explainable way to resume processing **without** introducing DLQ infrastructure, domain semantics, or additional automation. Manual re-queue keeps the system governable and demo-oriented while preserving correctness via effect-level idempotency.
+
+### Scope / Non-goals
+This decision does **not** introduce:
+- additional automatic retries or retry policies
+- batch re-queue operations
+- DLQ concepts or external queues
+- domain-specific failure semantics
+- ordering guarantees
+- any new safety boundary beyond effect-level idempotency

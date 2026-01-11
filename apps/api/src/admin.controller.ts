@@ -1,4 +1,15 @@
-import { Controller, Get, Query, BadRequestException } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Query,
+  Param,
+  BadRequestException,
+  NotFoundException,
+  ConflictException,
+  HttpCode,
+} from '@nestjs/common';
+import { logger } from '@pkg/shared';
 import { db } from './db';
 
 type JobRow = {
@@ -23,6 +34,17 @@ type EffectRow = {
   error_message: string | null;
   created_at: Date;
   updated_at: Date;
+};
+
+type JobRequeueRow = {
+  id: number;
+  status: string;
+  available_at: Date;
+};
+
+type JobStatusRow = {
+  id: number;
+  status: string;
 };
 
 const VALID_STATUSES = ['queued', 'in_progress', 'done', 'failed'] as const;
@@ -156,6 +178,70 @@ export class AdminController {
         limit: clampedLimit,
         server_now: serverNow,
       };
+    } finally {
+      client.release();
+    }
+  }
+
+  @HttpCode(200)
+  @Post('jobs/:id/requeue')
+  async requeueJob(@Param('id') id: unknown) {
+    const jobId = Number(id);
+    if (isNaN(jobId) || jobId <= 0) {
+      throw new BadRequestException('id must be a positive integer');
+    }
+
+    const client = await db.connect();
+    try {
+      // Atomic conditional UPDATE
+      const updateResult = await client.query<JobRequeueRow>(
+        `
+        UPDATE jobs
+        SET status = 'queued', available_at = NOW()
+        WHERE id = $1 AND status = 'failed'
+        RETURNING id, status, available_at
+        `,
+        [jobId],
+      );
+
+      if (updateResult.rows.length > 0) {
+        const updatedJob = updateResult.rows[0];
+
+        logger.info(
+          {
+            service: 'api',
+            job_id: jobId,
+            action: 'manual_requeue',
+          },
+          'manual requeue',
+        );
+
+        return {
+          ok: true,
+          id: updatedJob.id,
+          status: updatedJob.status,
+          available_at: updatedJob.available_at,
+        };
+      }
+
+      // UPDATE returned 0 rows - check if job exists and get status
+      const jobResult = await client.query<JobStatusRow>(
+        `
+        SELECT id, status
+        FROM jobs
+        WHERE id = $1
+        `,
+        [jobId],
+      );
+
+      if (jobResult.rows.length === 0) {
+        throw new NotFoundException(`Job with id ${jobId} not found`);
+      }
+
+      const job = jobResult.rows[0];
+      throw new ConflictException(
+        `Job with id ${jobId} is not in failed status (current status: ${job.status}). Only failed jobs can be requeued.`,
+      );
     } finally {
       client.release();
     }
