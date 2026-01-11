@@ -4,6 +4,7 @@ import {
   Post,
   Query,
   Param,
+  Body,
   BadRequestException,
   NotFoundException,
   ConflictException,
@@ -45,6 +46,20 @@ type JobRequeueRow = {
 type JobStatusRow = {
   id: number;
   status: string;
+};
+
+type JobInterventionAuditRow = {
+  id: number;
+  job_id: number;
+  action: string;
+  actor: string;
+  reason: string;
+  created_at: Date;
+};
+
+type RequeueRequestBody = {
+  actor: string;
+  reason: string;
 };
 
 const VALID_STATUSES = ['queued', 'in_progress', 'done', 'failed'] as const;
@@ -103,6 +118,27 @@ function validateExternalEventId(externalEventId: unknown): void {
       );
     }
   }
+}
+
+function validateRequeueBody(body: unknown): RequeueRequestBody {
+  if (typeof body !== 'object' || body === null) {
+    throw new BadRequestException('Body must be a JSON object');
+  }
+
+  const { actor, reason } = body as Record<string, unknown>;
+
+  if (typeof actor !== 'string' || actor.trim() === '') {
+    throw new BadRequestException('actor must be a non-empty string');
+  }
+
+  if (typeof reason !== 'string' || reason.trim() === '') {
+    throw new BadRequestException('reason must be a non-empty string');
+  }
+
+  return {
+    actor: actor.trim(),
+    reason: reason.trim(),
+  };
 }
 
 @Controller('admin')
@@ -185,14 +221,18 @@ export class AdminController {
 
   @HttpCode(200)
   @Post('jobs/:id/requeue')
-  async requeueJob(@Param('id') id: unknown) {
+  async requeueJob(@Param('id') id: unknown, @Body() body: unknown) {
     const jobId = Number(id);
     if (isNaN(jobId) || jobId <= 0) {
       throw new BadRequestException('id must be a positive integer');
     }
 
+    const requestBody = validateRequeueBody(body);
+
     const client = await db.connect();
     try {
+      await client.query('BEGIN');
+
       // Atomic conditional UPDATE
       const updateResult = await client.query<JobRequeueRow>(
         `
@@ -207,11 +247,29 @@ export class AdminController {
       if (updateResult.rows.length > 0) {
         const updatedJob = updateResult.rows[0];
 
+        // Insert audit record
+        const auditResult = await client.query<JobInterventionAuditRow>(
+          `
+          INSERT INTO job_intervention_audit (job_id, action, actor, reason)
+          VALUES ($1, $2, $3, $4)
+          RETURNING id, job_id, action, actor, reason, created_at
+          `,
+          [jobId, 'manual_requeue', requestBody.actor, requestBody.reason],
+        );
+
+        const audit = auditResult.rows[0];
+        if (!audit) {
+          throw new Error('Audit insert did not return a result');
+        }
+
+        await client.query('COMMIT');
+
         logger.info(
           {
             service: 'api',
             job_id: jobId,
             action: 'manual_requeue',
+            actor: requestBody.actor,
           },
           'manual requeue',
         );
@@ -221,6 +279,13 @@ export class AdminController {
           id: updatedJob.id,
           status: updatedJob.status,
           available_at: updatedJob.available_at,
+          audit: {
+            id: audit.id,
+            action: audit.action,
+            actor: audit.actor,
+            reason: audit.reason,
+            created_at: audit.created_at,
+          },
         };
       }
 
@@ -242,6 +307,13 @@ export class AdminController {
       throw new ConflictException(
         `Job with id ${jobId} is not in failed status (current status: ${job.status}). Only failed jobs can be requeued.`,
       );
+    } catch (error) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        // ignore rollback errors
+      }
+      throw error;
     } finally {
       client.release();
     }
