@@ -208,3 +208,112 @@ This milestone closes the reliability gap between
 "failure is visible" (M1) and
 "failure is recoverable" (M2),
 without introducing orchestration or domain coupling.
+
+## Milestone M3 — Manual Intervention & Auditability
+
+Milestone M3 introduces **explicit human intervention** as a governance mechanism
+when automation has definitively stopped (after M2).
+
+M3 does **not extend automation**.
+Instead, it defines a clear boundary between:
+- what the system is allowed to do automatically
+- what requires deliberate human decision
+
+---
+
+### What M3 adds
+
+#### Manual re-queue (explicit)
+
+- A job in `failed` state can be **manually re-queued**.
+- The operation is:
+  - explicit
+  - validated
+  - one-shot
+- Re-queue:
+  - operates on the **same job**
+  - does **not** create new jobs
+  - does **not** introduce new automation
+
+#### Append-only audit log
+
+- Every manual intervention produces **exactly one audit record**.
+- Each record includes:
+  - `job_id`
+  - `action`
+  - `actor`
+  - `reason`
+  - `timestamp`
+- The audit log is:
+  - append-only
+  - immutable
+  - strictly separated from job state
+
+#### Read-only visibility of interventions
+
+- Read-only admin endpoints allow:
+  - inspection of manual interventions
+  - correlation between audit entries and jobs
+  - visibility of the resulting job state
+- No control or mutation is possible via these endpoints.
+
+---
+
+### Guarantees introduced by M3
+
+- Every manual intervention is:
+  - **explicit**
+  - **validated**
+  - **fully auditable**
+- No human action is invisible or implicit.
+- The audit trail explains:
+  - who intervened
+  - when
+  - why
+- No change to the safety boundary:
+  - idempotency remains at effect level
+  - automated retries remain limited to M2 behavior
+
+---
+
+### What M3 explicitly does NOT guarantee
+
+- M3 does **not** fix malformed or semantically invalid jobs.
+- No Dead Letter Queue (explicit or implicit).
+- No automatic recovery beyond M2.
+- No domain-level semantics.
+- No new automation.
+- No ordering guarantees.
+- No escalation or retry driven by audit entries.
+
+The audit log **describes what happened**.
+It does not decide what happens next.
+
+---
+
+### How to demo M3
+
+1. Create a job that fails permanently.
+2. Verify the job is in `failed` state.
+3. Manually re-queue the job, providing:
+   - `actor`
+   - `reason`
+4. Verify:
+   - the updated job state
+   - the presence of the audit record
+5. Inspect everything via `/admin/interventions`.
+
+---
+
+### M3 Summary
+
+M3 introduces **explicit governance without extending automation**:
+
+- automation stops in a clear and observable way
+- human intervention is visible and accountable
+- the system remains minimal, explainable, and defensible
+
+M3 closes without introducing:
+- DLQ semantics
+- orchestration
+- domain logic

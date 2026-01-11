@@ -93,3 +93,19 @@ M1 introduces asynchronous job processing and a single idempotent business effec
 (activate subscription), enforced at the effect level.
 
 See docs/guarantees.md for guarantees and explicit non-guarantees.
+
+## M3: Manual intervention & auditability
+
+M3 introduces an explicit operational boundary:
+when automation stops, the system requires deliberate human intervention.
+
+- No new automation is added
+- No domain semantics are introduced
+- Manual actions are:
+  - explicit
+  - validated
+  - fully auditable
+
+M3 makes human decisions observable without turning them into automation.
+
+See `docs/guarantees.md` for detailed guarantees and non-guarantees.
