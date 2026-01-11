@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { db } from '../db';
 import { logger } from '@pkg/shared';
 import type { Job, FailureType, JobRetryState } from './job.types';
+import { JobNotFoundError } from '../errors';
 
 @Injectable()
 export class JobRepository {
@@ -132,7 +133,7 @@ export class JobRepository {
         [jobId],
       );
       if (result.rows.length === 0) {
-        throw new Error(`Job ${jobId} not found`);
+        throw new JobNotFoundError(jobId);
       }
       return result.rows[0];
     } finally {

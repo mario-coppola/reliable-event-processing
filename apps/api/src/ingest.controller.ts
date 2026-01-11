@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { logger } from '@pkg/shared';
 import { db } from './db';
+import { EventLedgerInsertFailedError } from './errors';
 
 type IngestEvent = {
   event_id: string;
@@ -64,7 +65,7 @@ export class IngestController {
 
       const eventLedgerId = res.rows[0]?.id;
       if (!eventLedgerId) {
-        throw new Error('event_ledger insert did not return an id');
+        throw new EventLedgerInsertFailedError();
       }
 
       await client.query(

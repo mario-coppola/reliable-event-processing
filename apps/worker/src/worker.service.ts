@@ -6,6 +6,7 @@ import { SubscriptionActivationService } from './handlers/subscription-activatio
 import { classifyFailure } from './retry/failure-classifier';
 import { shouldRetry, RETRY_DELAY_MS } from './retry/retry.policy';
 import { shouldFailNow } from './dev/failpoint.dev';
+import { FailpointError } from './errors';
 
 @Injectable()
 export class WorkerService implements OnModuleInit {
@@ -70,7 +71,7 @@ export class WorkerService implements OnModuleInit {
           { service: 'worker', job_id: job.id },
           'failpoint triggered',
         );
-        throw new Error('failpoint: simulated transient failure');
+        throw new FailpointError();
       }
 
       await this.subscriptionActivationService.processSubscriptionPaid(job);

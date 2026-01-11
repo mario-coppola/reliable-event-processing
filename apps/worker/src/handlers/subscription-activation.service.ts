@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { logger } from '@pkg/shared';
 import { db } from '../db';
 import type { Job } from '../jobs/job.types';
+import { EventLedgerNotFoundError, MalformedPayloadError } from '../errors';
 
 @Injectable()
 export class SubscriptionActivationService {
@@ -21,7 +22,7 @@ export class SubscriptionActivationService {
       );
 
       if (ledgerResult.rows.length === 0) {
-        throw new Error('event_ledger entry not found');
+        throw new EventLedgerNotFoundError(job.event_ledger_id);
       }
 
       const rawPayload = ledgerResult.rows[0].raw_payload;
@@ -34,7 +35,7 @@ export class SubscriptionActivationService {
         !('subscription_id' in rawPayload.payload) ||
         typeof rawPayload.payload.subscription_id !== 'string'
       ) {
-        throw new Error('malformed payload: missing subscription_id');
+        throw new MalformedPayloadError('missing subscription_id');
       }
 
       const subscriptionId = rawPayload.payload.subscription_id;
