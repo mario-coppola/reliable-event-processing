@@ -8,8 +8,8 @@ import {
 import { logger } from '@pkg/shared';
 import { db } from './db';
 import { EventLedgerInsertFailedError } from './errors';
-import { parseOrThrow } from './admin/validation/parse-or-throw';
-import { ingestEventBodySchema } from './admin/validation/schemas';
+import { parseOrThrow } from './validation/parse-or-throw';
+import { ingestEventBodySchema } from './validation/schemas';
 
 @Controller()
 export class IngestController {

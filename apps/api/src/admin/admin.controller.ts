@@ -8,14 +8,14 @@ import {
   HttpCode,
 } from '@nestjs/common';
 import { AdminService } from './admin.service';
-import { parseOrThrow } from './validation/parse-or-throw';
+import { parseOrThrow } from '../validation/parse-or-throw';
 import {
   getJobsQuerySchema,
   requeueJobBodySchema,
   getInterventionsQuerySchema,
   positiveIntegerSchema,
   limitSchema,
-} from './validation/schemas';
+} from '../validation/schemas';
 
 @Controller('admin')
 export class AdminController {
@@ -49,7 +49,7 @@ export class AdminController {
   @HttpCode(200)
   @Post('jobs/:id/requeue')
   async requeueJob(@Param('id') id: unknown, @Body() body: unknown) {
-    const jobId = parseOrThrow(positiveIntegerSchema, id) as number;
+    const jobId = parseOrThrow(positiveIntegerSchema, id);
     const requestBody = parseOrThrow(requeueJobBodySchema, body);
 
     return this.adminService.requeueJob(

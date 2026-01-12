@@ -126,6 +126,45 @@ main() {
   fi
   ok "  API is reachable"
 
+  # A1) Validation negative tests
+  log ""
+  log "A1) Validation negative tests (Zod validation)"
+  log "  Testing GET /admin/jobs?limit=999 (should be 400)"
+  local validation_response_1
+  validation_response_1=$(
+    api_curl GET "/admin/jobs?limit=999"
+  )
+  local validation_code_1
+  validation_code_1=$(echo "$validation_response_1" | head -n1)
+  if [ "$validation_code_1" != "400" ]; then
+    fail "Expected 400 for limit=999, got $validation_code_1"
+  fi
+  ok "  limit=999 correctly rejected (400)"
+
+  log "  Testing GET /admin/jobs?status=boh (should be 400)"
+  local validation_response_2
+  validation_response_2=$(
+    api_curl GET "/admin/jobs?status=boh"
+  )
+  local validation_code_2
+  validation_code_2=$(echo "$validation_response_2" | head -n1)
+  if [ "$validation_code_2" != "400" ]; then
+    fail "Expected 400 for status=boh, got $validation_code_2"
+  fi
+  ok "  status=boh correctly rejected (400)"
+
+  log "  Testing GET /admin/interventions?job_id=abc (should be 400)"
+  local validation_response_3
+  validation_response_3=$(
+    api_curl GET "/admin/interventions?job_id=abc"
+  )
+  local validation_code_3
+  validation_code_3=$(echo "$validation_response_3" | head -n1)
+  if [ "$validation_code_3" != "400" ]; then
+    fail "Expected 400 for job_id=abc, got $validation_code_3"
+  fi
+  ok "  job_id=abc correctly rejected (400)"
+
   # B) Ingest OK path
   log ""
   log "B) Ingest OK path (M1/M2 invariants)"
