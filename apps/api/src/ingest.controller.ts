@@ -2,52 +2,21 @@ import {
   Controller,
   Post,
   Body,
-  BadRequestException,
   HttpCode,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { logger } from '@pkg/shared';
 import { db } from './db';
 import { EventLedgerInsertFailedError } from './errors';
-
-type IngestEvent = {
-  event_id: string;
-  event_type: string;
-  payload: Record<string, unknown>;
-};
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function validateIngestEvent(body: unknown): IngestEvent {
-  if (!isPlainObject(body)) {
-    throw new BadRequestException('Body must be a JSON object');
-  }
-
-  const { event_id, event_type, payload } = body;
-
-  if (typeof event_id !== 'string' || event_id.trim().length === 0) {
-    throw new BadRequestException('event_id must be a non-empty string');
-  }
-
-  if (typeof event_type !== 'string' || event_type.trim().length === 0) {
-    throw new BadRequestException('event_type must be a non-empty string');
-  }
-
-  if (!isPlainObject(payload)) {
-    throw new BadRequestException('payload must be a JSON object');
-  }
-
-  return { event_id, event_type, payload };
-}
+import { parseOrThrow } from './admin/validation/parse-or-throw';
+import { ingestEventBodySchema } from './admin/validation/schemas';
 
 @Controller()
 export class IngestController {
   @HttpCode(202)
   @Post('/events/ingest')
   async ingest(@Body() body: unknown) {
-    const event = validateIngestEvent(body);
+    const event = parseOrThrow(ingestEventBodySchema, body);
 
     const client = await db.connect();
 

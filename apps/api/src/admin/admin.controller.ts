@@ -5,20 +5,17 @@ import {
   Query,
   Param,
   Body,
-  BadRequestException,
   HttpCode,
 } from '@nestjs/common';
 import { AdminService } from './admin.service';
+import { parseOrThrow } from './validation/parse-or-throw';
 import {
-  clampLimit,
-  validateStatus,
-  validateEventType,
-  validateExternalEventId,
-  validateFailureType,
-  validateRequeueBody,
-  validateJobId,
-  validateAction,
-} from './validation';
+  getJobsQuerySchema,
+  requeueJobBodySchema,
+  getInterventionsQuerySchema,
+  positiveIntegerSchema,
+  limitSchema,
+} from './validation/schemas';
 
 @Controller('admin')
 export class AdminController {
@@ -32,30 +29,28 @@ export class AdminController {
     @Query('external_event_id') externalEventId?: unknown,
     @Query('failure_type') failureType?: unknown,
   ) {
-    const clampedLimit = clampLimit(limit);
-    validateStatus(status);
-    validateEventType(eventType);
-    validateExternalEventId(externalEventId);
-    validateFailureType(failureType);
+    const parsed = parseOrThrow(getJobsQuerySchema, {
+      limit,
+      status,
+      event_type: eventType,
+      external_event_id: externalEventId,
+      failure_type: failureType,
+    });
 
     return this.adminService.getJobs({
-      status: status as string | undefined,
-      eventType: eventType as string | undefined,
-      externalEventId: externalEventId as string | undefined,
-      failureType: failureType as string | undefined,
-      limit: clampedLimit,
+      status: parsed.status,
+      eventType: parsed.event_type,
+      externalEventId: parsed.external_event_id,
+      failureType: parsed.failure_type,
+      limit: parsed.limit as number,
     });
   }
 
   @HttpCode(200)
   @Post('jobs/:id/requeue')
   async requeueJob(@Param('id') id: unknown, @Body() body: unknown) {
-    const jobId = Number(id);
-    if (isNaN(jobId) || jobId <= 0) {
-      throw new BadRequestException('id must be a positive integer');
-    }
-
-    const requestBody = validateRequeueBody(body);
+    const jobId = parseOrThrow(positiveIntegerSchema, id) as number;
+    const requestBody = parseOrThrow(requeueJobBodySchema, body);
 
     return this.adminService.requeueJob(
       jobId,
@@ -70,21 +65,23 @@ export class AdminController {
     @Query('job_id') jobId?: unknown,
     @Query('action') action?: unknown,
   ) {
-    const clampedLimit = clampLimit(limit);
-    validateJobId(jobId);
-    validateAction(action);
+    const parsed = parseOrThrow(getInterventionsQuerySchema, {
+      limit,
+      job_id: jobId,
+      action,
+    });
 
     return this.adminService.getInterventions({
-      jobId: jobId !== undefined && jobId !== null ? Number(jobId) : undefined,
-      action: action as string | undefined,
-      limit: clampedLimit,
+      jobId: parsed.job_id as number | undefined,
+      action: parsed.action,
+      limit: parsed.limit as number,
     });
   }
 
   @Get('effects')
   async getEffects(@Query('limit') limit?: unknown) {
-    const clampedLimit = clampLimit(limit);
+    const parsedLimit = parseOrThrow(limitSchema, limit) as number;
 
-    return this.adminService.getEffects(clampedLimit);
+    return this.adminService.getEffects(parsedLimit);
   }
 }
