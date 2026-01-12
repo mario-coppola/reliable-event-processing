@@ -19,7 +19,8 @@
       "infra:down": "docker compose -f infra/docker-compose.yml down",
       "infra:logs": "docker compose -f infra/docker-compose.yml logs -f",
 
-      "demo:send": "node scripts/send-demo-events.mjs"
+      "demo:send": "node scripts/send-demo-events.mjs",
+      "demo:m3": "bash scripts/demo_m3.sh"
     },
     "devDependencies": {
       "@types/node": "^24.0.0",
