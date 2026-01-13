@@ -7,6 +7,28 @@ It is intentionally scoped to **observable system behavior**, not implementation
 
 ---
 
+## M0 — System Foundations
+
+M0 defines the foundational constraints of the system.
+
+Guarantees
+- Events are append-only once ingested.
+- Each external event is identified by a stable external identifier.
+- No event can be mutated or deleted after ingestion.
+- Persistence is the source of truth, not in-memory state.
+- The system is restart-safe: crashes do not corrupt invariants.
+
+Non-guarantees
+- No processing semantics are defined.
+- No delivery, ordering, or execution guarantees exist.
+- No retries, backoff, or failure handling are implied.
+- No domain meaning is attached to events.
+
+M0 establishes structural immutability and durability only.
+All behavior is layered on top in later milestones.
+
+---
+
 ## What M1 adds (compared to M0)
 
 Milestone M1 introduces asynchronous processing and a minimal business effect,
